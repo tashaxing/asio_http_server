@@ -662,6 +662,9 @@ namespace http
 
 		void HttpConnection::start()
 		{
+			// init the header parse flag
+			is_header_parsed_ = false;
+
 			do_read();
 		}
 
@@ -678,13 +681,61 @@ namespace http
 				{
 					if (!ec)
 					{
-						HttpRequestParser::result_type result;
-						std::tie(result, std::ignore) = request_parser_.parse(
-							request_, buffer_.data(), buffer_.data() + bytes_transferred);
+						// POST will request twice
+						std::string buf_data(buffer_.data(), bytes_transferred);
+						req_data_.append(buf_data);
 
-						if (result == HttpRequestParser::good)
+						// read again if encounter post
+						int header_end = req_data_.find("\r\n\r\n"); // http header end mark
+						if (header_end < 0)
 						{
+							do_read();
+							return;
+						}
+
+						HttpRequestParser::result_type result;
+
+						// parse header data
+						if (!is_header_parsed_)
+						{
+							// this will be enough for GET request
+							std::tie(result, std::ignore) = request_parser_.parse(
+								request_, buffer_.data(), buffer_.data() + bytes_transferred);
+						}
+
+						if (is_header_parsed_ || result == HttpRequestParser::good)
+						{
+							is_header_parsed_ = true; // set true anyway after parse header success
+							
+							std::string length_str;
+							for (int i = 0; i < request_.headers.size(); i++)
+							{
+								if (request_.headers[i].name == "Content-Length")
+								{
+									length_str = request_.headers[i].value;
+									break;
+								}
+							}
+
+							int content_length = 0;
+							if (!length_str.empty())
+								content_length = atoi(length_str.c_str());
+
+							if (req_data_.length() < (content_length + header_end + 4)) // FIXME: 4 stands for \r\n\r\n
+							{
+								// read data incomplete, continue to read
+								do_read();
+								return;
+							}
+
+							// parse body data in the tail if needed, here support string format body data
+							request_.body = req_data_.substr(header_end + 4); // FIXME: 4 stands for \r\n\r\n
+							
+							// clear the temp buffer before handle
+							req_data_.clear();
 							request_handler_->handle_request(request_, reply_);
+
+							// response
 							do_write();
 						}
 						else if (result == HttpRequestParser::bad)

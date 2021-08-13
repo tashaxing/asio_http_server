@@ -42,6 +42,7 @@ namespace http
 			int http_version_major;
 			int http_version_minor;
 			std::vector<HttpHeader> headers;
+			std::string body; // new field
 		};
 
 		/// A reply to be sent to a client.
@@ -195,6 +196,11 @@ namespace http
 
 			/// Stop all asynchronous operations associated with the connection.
 			void stop();
+
+		private:
+			// to support POST
+			bool is_header_parsed_ = false;
+			std::string req_data_;
 
 		private:
 			/// Perform an asynchronous read operation.
